@@ -1,0 +1,58 @@
+name: Build Android wheel
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: "Пакет на PyPI (Rust + PyO3 + maturin)"
+        default: "pydantic-core"
+      version:
+        description: "Точная версия (для aiogram 3.31 / pydantic 2.13.5 это 2.46.5)"
+        default: "2.46.5"
+      python:
+        description: "Версия Python в Chaquopy"
+        default: "3.11"
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [armeabi-v7a, arm64-v8a]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Rust targets
+        run: |
+          rustup update stable
+          rustup target add armv7-linux-androideabi aarch64-linux-android
+          rustc --version
+      - name: Build wheel
+        run: >
+          python build_wheel.py
+          --package "${{ inputs.package }}" --version "${{ inputs.version }}"
+          --python "${{ inputs.python }}" --abi "${{ matrix.abi }}" --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.abi }}
+          path: dist/*.whl
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ inputs.package }}-${{ inputs.version }}"
+          gh release create "$tag" dist/*.whl --repo "$GITHUB_REPOSITORY" --title "$tag" \
+            --notes "Android-колёса для Chaquopy (Python ${{ inputs.python }}). Источник для pip: https://github.com/$GITHUB_REPOSITORY/releases/expanded_assets/$tag" \
+            || gh release upload "$tag" dist/*.whl --clobber --repo "$GITHUB_REPOSITORY"
+          echo "find-links: https://github.com/$GITHUB_REPOSITORY/releases/expanded_assets/$tag"
